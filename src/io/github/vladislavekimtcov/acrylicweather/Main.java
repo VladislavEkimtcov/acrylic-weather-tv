@@ -5,9 +5,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Paint;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.ShapeDrawable;
 import android.graphics.drawable.shapes.RectShape;
@@ -20,9 +18,11 @@ import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.File;
@@ -31,6 +31,8 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -43,7 +45,9 @@ import java.util.concurrent.Executors;
  * Remote: up/down in the sidebar switches places; right goes to the forecast. In the daily strip,
  * left/right picks a day (the sky previews it, the hourly graph and day details follow). Down to
  * the hourly graph, where left/right reads out each hour. Up from the days reaches °F | °C.
- * Menu refreshes. Back from the forecast returns to the sidebar, Back from the sidebar exits.
+ * Back from the forecast returns to the sidebar and to today; Back from the sidebar exits.
+ * Up from the first place: + (search Open-Meteo for a city and add it) and refresh.
+ * Menu: a flyout next to the selected place with Delete and Rearrange.
  */
 public final class Main extends Activity {
     private static final long STALE_MS = 10 * 60 * 1000L;
@@ -52,6 +56,8 @@ public final class Main extends Activity {
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    /** City search, apart from the forecast so a slow fetch doesn't hold up typing. */
+    private final ExecutorService net = Executors.newSingleThreadExecutor();
     private final Icons icons = new Icons();
     private SharedPreferences prefs;
 
@@ -68,6 +74,13 @@ public final class Main extends Activity {
     /** Playing (or fading to) and asked for; the veil covers each switch. */
     private String scene, wantScene;
     private File mediaDir;
+    private FrameLayout root;
+    private Glyph plus, refresh;
+    private Flyout menu;
+    private Finder finder;
+    /** The place being moved by Rearrange, or -1. */
+    private int moving = -1, moveStart;
+    private boolean confirming;
     private LinearLayout rowsBox;
     private final List<PlaceRow> rows = new ArrayList<>();
     private TextView updated, source;
@@ -110,6 +123,9 @@ public final class Main extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         Ui.init(this);
+        // The keyboard (city search) slides over the page; the layout and the sky never resize.
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+                | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         prefs = getSharedPreferences("prefs", MODE_PRIVATE);
         try {
             Api.userAgent = "AcrylicWeather/" + getPackageManager().getPackageInfo(getPackageName(), 0).versionName + " (Android TV)";
@@ -149,6 +165,9 @@ public final class Main extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (moving >= 0) endMove();
+        if (menu.isOpen()) closeMenu();
+        if (finder.isOpen()) closeFinder();
         // Give the video decoder back while away; on return the veil fades the sky in again.
         backdrop.setRunning(false);
         veil.animate().cancel();
@@ -161,6 +180,7 @@ public final class Main extends Activity {
     protected void onDestroy() {
         super.onDestroy();
         io.shutdownNow();
+        net.shutdownNow();
     }
 
     // ---- settings and data -------------------------------------------------------------------
@@ -196,14 +216,15 @@ public final class Main extends Activity {
     private void fetch() {
         if (fetching) return;
         fetching = true;
-        final Places ps = places;
-        final String key = ps.key();
+        refresh.spin(true);
+        final List<Places.Place> list = new ArrayList<>(places.list);
+        final String key = places.key();
         final File cache = getCacheDir();
         io.execute(() -> {
             Forecast[] got = null;
             String err = null;
             try {
-                got = Api.fetch(ps.list, cache, key);
+                got = Api.fetch(list, cache, key);
             } catch (Exception e) {
                 err = e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
             }
@@ -211,7 +232,11 @@ public final class Main extends Activity {
             final String failure = err;
             ui.post(() -> {
                 fetching = false;
-                if (!key.equals(places.key())) return;
+                refresh.spin(false);
+                if (!key.equals(places.key())) {
+                    fetch(); // places were added, deleted or moved meanwhile
+                    return;
+                }
                 if (result != null) {
                     data = result;
                     error = null;
@@ -231,7 +256,7 @@ public final class Main extends Activity {
     // ---- layout ------------------------------------------------------------------------------
 
     private View build() {
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         backdrop = new Backdrop(this, mediaDir);
         backdrop.setListener(new Backdrop.Listener() {
             @Override
@@ -330,38 +355,66 @@ public final class Main extends Activity {
         credit.setText("Weather data by Open-Meteo.com (CC BY 4.0). No location is ever read: places come from places.conf.");
         credit.setSingleLine(false);
         detailsBox.addView(credit, lp(-1, -2, 0, 20));
+
+        menu = new Flyout(this);
+        root.addView(menu, new FrameLayout.LayoutParams(-2, -2));
+        finder = new Finder(this, ui, net, this::pick);
+        root.addView(finder, new FrameLayout.LayoutParams(-2, -2));
         return root;
     }
 
     private View sidebar() {
         LinearLayout side = new LinearLayout(this);
         side.setOrientation(LinearLayout.VERTICAL);
-        side.setClipChildren(false);
-        side.setPadding(0, Ui.dp(22), 0, Ui.dp(18));
+        side.setClipChildren(true); // the scrolling list must not draw over the header
+        side.setPadding(0, Ui.dp(14), 0, Ui.dp(18));
         GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[] {0x8C0A0F18, 0x7A0A0F18});
         side.setBackground(bg);
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
-        head.setPadding(Ui.dp(20), 0, Ui.dp(16), 0);
-        head.addView(new Hamburger(this), new LinearLayout.LayoutParams(Ui.dp(20), Ui.dp(16)));
+        head.setPadding(Ui.dp(8), 0, Ui.dp(16), 0);
+        plus = new Glyph(this, Glyph.PLUS);
+        plus.setOnClickListener(v -> openFinder());
+        refresh = new Glyph(this, Glyph.REFRESH);
+        refresh.setOnClickListener(v -> refreshNow());
+        plus.setNextFocusLeftId(plus.getId());
+        plus.setNextFocusUpId(plus.getId());
+        plus.setNextFocusRightId(refresh.getId());
+        refresh.setNextFocusLeftId(plus.getId());
+        refresh.setNextFocusUpId(refresh.getId());
+        refresh.setNextFocusRightId(refresh.getId());
+        head.addView(plus, new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40)));
+        LinearLayout.LayoutParams gp = new LinearLayout.LayoutParams(Ui.dp(40), Ui.dp(40));
+        gp.leftMargin = Ui.dp(2);
+        head.addView(refresh, gp);
         TextView title = Ui.text(this, 20, Ui.WHITE, Ui.light);
         title.setText("Weather");
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
-        tp.leftMargin = Ui.dp(16);
+        tp.leftMargin = Ui.dp(12);
         head.addView(title, tp);
         side.addView(head);
 
         TextView label = sectionLabel("Places");
         label.setPadding(Ui.dp(20), 0, 0, 0);
-        side.addView(label, lp(-1, -2, 0, 26));
+        side.addView(label, lp(-1, -2, 0, 22));
 
+        // More places than fit scroll; the edges fade where there are more.
+        ScrollView list = new ScrollView(this);
+        list.setVerticalScrollBarEnabled(false);
+        list.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        list.setVerticalFadingEdgeEnabled(true);
+        list.setFadingEdgeLength(Ui.dp(28));
+        list.setSmoothScrollingEnabled(true);
         rowsBox = new LinearLayout(this);
         rowsBox.setOrientation(LinearLayout.VERTICAL);
-        side.addView(rowsBox, lp(-1, -2, 0, 8));
+        list.addView(rowsBox, new FrameLayout.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, 0, 1);
+        sp.topMargin = Ui.dp(8);
+        sp.bottomMargin = Ui.dp(10);
+        side.addView(list, sp);
 
-        side.addView(new View(this), new LinearLayout.LayoutParams(-1, 0, 1));
         updated = Ui.text(this, 12, Ui.MUTED, Ui.regular);
         updated.setPadding(Ui.dp(20), 0, Ui.dp(12), 0);
         updated.setSingleLine(false);
@@ -379,13 +432,11 @@ public final class Main extends Activity {
         region = Ui.text(this, 16, Ui.MUTED, Ui.light);
         localTime = Ui.text(this, 16, Ui.MUTED, Ui.light);
         top.addView(city);
+        // Name, region and clock share one baseline (LinearLayout aligns baselines by default).
         LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(0, -2, 1);
         rp.leftMargin = Ui.dp(12);
-        rp.bottomMargin = Ui.dp(4);
         top.addView(region, rp);
-        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
-        tp.bottomMargin = Ui.dp(4);
-        top.addView(localTime, tp);
+        top.addView(localTime, new LinearLayout.LayoutParams(-2, -2));
         box.addView(top, lp(-1, -2, 0, 0));
 
         LinearLayout now = new LinearLayout(this);
@@ -439,12 +490,16 @@ public final class Main extends Activity {
             r.setId(View.generateViewId());
             final int k = i;
             r.setOnFocusChangeListener((v, has) -> {
-                if (has && k != current) {
+                if (!has || moving >= 0) return;
+                // Back in the list, every place shows today: the days are browsed one city at a time.
+                if (dayIndex != 0) selectDay(0, true);
+                if (k != current) {
                     ui.removeCallbacks(pendingPlace);
                     ui.postDelayed(pendingPlace, 220);
                 }
             });
             r.setOnClickListener(v -> {
+                if (moving >= 0) return;
                 ui.removeCallbacks(pendingPlace);
                 if (k != current) show(k, true);
                 days[dayIndex].requestFocus();
@@ -453,8 +508,10 @@ public final class Main extends Activity {
             rowsBox.addView(r, new LinearLayout.LayoutParams(-1, Ui.dp(62)));
         }
         if (!rows.isEmpty()) {
-            rows.get(0).setNextFocusUpId(rows.get(0).getId());
+            rows.get(0).setNextFocusUpId(plus.getId());
             rows.get(rows.size() - 1).setNextFocusDownId(rows.get(rows.size() - 1).getId());
+            plus.setNextFocusDownId(rows.get(0).getId());
+            refresh.setNextFocusDownId(rows.get(0).getId());
         }
         source.setText("Open-Meteo · " + places.source);
     }
@@ -478,18 +535,15 @@ public final class Main extends Activity {
     private void show(int index, boolean animate) {
         current = Math.max(0, Math.min(index, places.list.size() - 1));
         Places.Place pl = places.list.get(current);
-        for (int i = 0; i < rows.size(); i++) rows.get(i).setCurrent(i == current);
-        int leftTarget = rows.isEmpty() ? View.NO_ID : rows.get(current).getId();
-        days[0].setNextFocusLeftId(leftTarget);
-        chart.setNextFocusLeftId(leftTarget);
-        details[0].setNextFocusLeftId(leftTarget);
-        details[3].setNextFocusLeftId(leftTarget);
-        units.setNextFocusLeftId(leftTarget);
+        linkSidebar();
         city.setText(pl.name);
         region.setText(pl.region);
         refreshRows();
 
         Forecast f = data == null || current >= data.length ? null : data[current];
+        // A place just added has no forecast yet: blank the page rather than show the last one's.
+        for (int i = 1; i < sections.length; i++) sections[i].setAlpha(f == null ? 0f : 1f);
+        heroIcon.setVisibility(f == null ? View.INVISIBLE : View.VISIBLE);
         if (f == null) {
             temp.setText("--");
             shownDeg = Integer.MIN_VALUE;
@@ -497,6 +551,8 @@ public final class Main extends Activity {
             feels.setText(error == null ? "" : "Retrying shortly");
             hilo.setText("");
             localTime.setText("");
+            for (TextView t : metricValue) t.setText("");
+            for (TextView t : metricLabel) t.setText("");
             units.render();
             if (data == null) fetch();
             return;
@@ -543,6 +599,17 @@ public final class Main extends Activity {
             entrance();
         }
         refreshClocks();
+    }
+
+    /** Which row the page's left edge leads back to, and where right from the list lands. */
+    private void linkSidebar() {
+        for (int i = 0; i < rows.size(); i++) rows.get(i).setCurrent(i == current);
+        int leftTarget = rows.isEmpty() ? View.NO_ID : rows.get(current).getId();
+        days[0].setNextFocusLeftId(leftTarget);
+        chart.setNextFocusLeftId(leftTarget);
+        details[0].setNextFocusLeftId(leftTarget);
+        details[3].setNextFocusLeftId(leftTarget);
+        units.setNextFocusLeftId(leftTarget);
     }
 
     private void metric(int i, String label, String value) {
@@ -640,6 +707,7 @@ public final class Main extends Activity {
 
     private void refreshClocks() {
         refreshRows();
+        backdrop.setDark(darkHere());
         Forecast f = data == null || current >= data.length ? null : data[current];
         if (f != null) {
             long now = f.now();
@@ -684,7 +752,8 @@ public final class Main extends Activity {
             if (next == null || next.equals(scene)) return;
             // While the veil is up (first sky, or back from pause) it takes the new sky's colours;
             // otherwise the backdrop crossfades from one sky to the next by itself.
-            if (veil.getVisibility() == View.VISIBLE) setVeil(Scenes.colors(next));
+            backdrop.setDark(darkHere());
+            if (veil.getVisibility() == View.VISIBLE) setVeil(veilColors(next));
             scene = next;
             backdrop.play(next, places.list.get(current).lat < 0);
         }
@@ -698,20 +767,251 @@ public final class Main extends Activity {
         ui.postDelayed(applyScene, scene == null ? 0 : 380);
     }
 
+    /** The still gradient for a sky, dimmed like the video when that sky is. */
+    private int[] veilColors(String scene) {
+        int[] c = Scenes.colors(scene).clone();
+        float k = Backdrop.dimFor(scene, darkHere());
+        if (k < 1f) for (int i = 0; i < c.length; i++) c[i] = Ui.lerpColor(0xFF000000, c[i] | 0xFF000000, k);
+        return c;
+    }
+
+    /**
+     * Best guess at whether it's dark where the TV is, without asking where that is: the first
+     * listed place in the TV's own time zone (by its UTC offset now), after its sunset and before
+     * its sunrise. With no such place, the TV's clock: 19:00 to 7:00.
+     */
+    private boolean darkHere() {
+        long ms = System.currentTimeMillis();
+        int offset = TimeZone.getDefault().getOffset(ms) / 1000;
+        if (data != null) {
+            for (Forecast f : data) {
+                if (f != null && f.utcOffset == offset) return !f.isDayAt(f.now());
+            }
+        }
+        long hour = Math.floorMod(ms / 1000 + offset, 86400L) / 3600;
+        return hour >= 19 || hour < 7;
+    }
+
     private void setVeil(int[] c) {
         veil.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, c));
+    }
+
+    // ---- editing the places ------------------------------------------------------------------
+
+    private void refreshNow() {
+        lastFetchMs = 0;
+        updated.setText("Updating…");
+        fetch();
+    }
+
+    /** Writes the list back to places.conf, so it survives a restart. */
+    private void persist() {
+        boolean ok = places.save(mediaDir);
+        source.setText("Open-Meteo · " + (ok ? places.source : "couldn't save places.conf"));
+    }
+
+    /** ☰ Menu: focus goes to the selected place and its flyout slides out beside it. */
+    private void openMenu() {
+        if (rows.isEmpty()) return;
+        if (finder.isOpen()) closeFinder();
+        rows.get(current).requestFocus();
+        ui.post(() -> showMenu(0));
+    }
+
+    private void showMenu(int focus) {
+        PlaceRow row = rows.get(current);
+        row.requestFocus(); // hold focus here while the flyout's items are swapped
+        confirming = false;
+        boolean one = places.list.size() < 2;
+        String[] labels = one ? new String[] {"Rearrange"} : new String[] {"Delete", "Rearrange"};
+        Runnable[] actions = one ? new Runnable[] {this::startMove} : new Runnable[] {this::confirmDelete, this::startMove};
+        menu.open(Ui.dp(232), rowTop(row), null, labels, actions, focus);
+    }
+
+    private void confirmDelete() {
+        PlaceRow row = rows.get(current);
+        row.requestFocus();
+        confirming = true;
+        // Focus starts on Cancel: OK twice in a row doesn't delete.
+        menu.open(Ui.dp(232), rowTop(row), "Delete " + places.list.get(current).name + "?",
+                new String[] {"Delete", "Cancel"}, new Runnable[] {this::deleteCurrent, () -> showMenu(0)}, 1);
+    }
+
+    private float rowTop(View row) {
+        int[] a = new int[2], b = new int[2];
+        row.getLocationInWindow(a);
+        root.getLocationInWindow(b);
+        return a[1] - b[1];
+    }
+
+    private void closeMenu() {
+        confirming = false;
+        if (!rows.isEmpty()) rows.get(current).requestFocus();
+        menu.close();
+    }
+
+    private void deleteCurrent() {
+        int i = current;
+        places.list.remove(i);
+        if (data != null) {
+            Forecast[] d = new Forecast[data.length - 1];
+            for (int j = 0, n = 0; j < data.length; j++) if (j != i) d[n++] = data[j];
+            data = d;
+        }
+        current = Math.min(i, places.list.size() - 1);
+        confirming = false;
+        buildRows();
+        show(current, true);
+        rows.get(current).requestFocus();
+        menu.close();
+        persist();
+        fetch(); // the cached forecast is keyed by the list
+    }
+
+    /** Rearrange: the place lifts, the others dim, up and down move it, OK or Back drops it. */
+    private void startMove() {
+        rows.get(current).requestFocus();
+        menu.close();
+        confirming = false;
+        moving = moveStart = current;
+        for (int i = 0; i < rows.size(); i++) {
+            rows.get(i).animate().alpha(i == moving ? 1f : 0.42f).setDuration(160).setInterpolator(EASE).start();
+        }
+        markMoving();
+    }
+
+    private void markMoving() {
+        for (int i = 0; i < rows.size(); i++) rows.get(i).setMoving(i == moving, moving > 0, moving < rows.size() - 1);
+    }
+
+    private static boolean isRemoteKey(int code) {
+        switch (code) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_BACK:
+            case KeyEvent.KEYCODE_MENU:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void moveKey(int code) {
+        if (code == KeyEvent.KEYCODE_DPAD_UP) moveBy(-1);
+        else if (code == KeyEvent.KEYCODE_DPAD_DOWN) moveBy(1);
+        else if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_BACK) endMove();
+    }
+
+    private void moveBy(int d) {
+        int from = moving, to = moving + d;
+        if (to < 0 || to >= rows.size()) return;
+        Collections.swap(places.list, from, to);
+        if (data != null && Math.max(from, to) < data.length) {
+            Forecast t = data[from];
+            data[from] = data[to];
+            data[to] = t;
+        }
+        moving = to;
+        current = to;
+        refreshRows();
+        linkSidebar();
+        markMoving();
+        // The rows stay put and swap contents; sliding them from each other's place shows the move.
+        PlaceRow a = rows.get(from), b = rows.get(to);
+        float h = b.getHeight();
+        b.animate().cancel();
+        a.animate().cancel();
+        b.setTranslationY(-d * h);
+        a.setTranslationY(d * h);
+        b.setAlpha(1f);
+        a.setAlpha(0.42f);
+        b.animate().translationY(0).setDuration(150).setInterpolator(EASE).start();
+        a.animate().translationY(0).setDuration(150).setInterpolator(EASE).start();
+        b.requestFocus();
+    }
+
+    private void endMove() {
+        moving = -1;
+        for (PlaceRow r : rows) {
+            r.animate().alpha(1f).translationY(0).setDuration(160).setInterpolator(EASE).start();
+        }
+        markMoving();
+        if (current != moveStart) {
+            persist();
+            fetch(); // the cached forecast is keyed by the list order
+        }
+    }
+
+    private void openFinder() {
+        if (menu.isOpen()) closeMenu();
+        finder.open(Ui.dp(232), Ui.dp(12), places);
+    }
+
+    private void closeFinder() {
+        plus.requestFocus();
+        finder.close();
+    }
+
+    /** A search result was picked: add it at the end (or go to it if it's listed) and show it. */
+    private void pick(Geo.Hit hit) {
+        Places.Place p = hit.toPlace();
+        int at = places.indexOf(p);
+        if (at < 0) {
+            if (places.list.size() >= Places.MAX) {
+                finder.say("The sidebar holds " + Places.MAX + " places. Delete one to add another.");
+                return;
+            }
+            places.list.add(p);
+            if (data != null) data = Arrays.copyOf(data, data.length + 1);
+            at = places.list.size() - 1;
+            buildRows();
+            persist();
+            fetch();
+        }
+        dayIndex = 0;
+        show(at, true);
+        rows.get(at).requestFocus();
+        finder.close();
     }
 
     // ---- keys --------------------------------------------------------------------------------
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        int code = e.getKeyCode();
+        if (moving >= 0 && isRemoteKey(code)) {
+            if (e.getAction() == KeyEvent.ACTION_DOWN) moveKey(code);
+            return true;
+        }
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
-            int code = e.getKeyCode();
+            if (menu.isOpen()) {
+                View f = getCurrentFocus();
+                if (f == null || f.getParent() != menu) {
+                    closeMenu();
+                } else if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_MENU
+                        || code == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    if (confirming && code == KeyEvent.KEYCODE_BACK) showMenu(0);
+                    else closeMenu();
+                    return true;
+                } else if (code == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    return true;
+                }
+            }
+            if (finder.isOpen()) {
+                if (code == KeyEvent.KEYCODE_BACK) {
+                    closeFinder();
+                    return true;
+                }
+                if (code == KeyEvent.KEYCODE_MENU) return true;
+                View f = getCurrentFocus();
+                if (f == null || !finder.owns(f)) finder.focusField();
+            }
             if (code == KeyEvent.KEYCODE_MENU) {
-                lastFetchMs = 0;
-                updated.setText("Updating…");
-                fetch();
+                if (e.getRepeatCount() == 0) openMenu();
                 return true;
             }
             if (code == KeyEvent.KEYCODE_BACK && e.getRepeatCount() == 0) {
@@ -767,25 +1067,6 @@ public final class Main extends Activity {
             g.setColor(Color.TRANSPARENT);
             g.setStroke(Ui.dp(2), 0xE6FFFFFF);
             return g;
-        }
-    }
-
-    /** The three-line navigation glyph at the top of the sidebar. */
-    static final class Hamburger extends View {
-        private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-        Hamburger(Context c) {
-            super(c);
-            p.setColor(Ui.WHITE);
-        }
-
-        @Override
-        protected void onDraw(Canvas c) {
-            float h = Ui.px(1.6f), w = getWidth();
-            for (int i = 0; i < 3; i++) {
-                float y = getHeight() * (0.15f + i * 0.35f);
-                c.drawRect(0, y, w, y + h, p);
-            }
         }
     }
 }

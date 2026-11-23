@@ -47,6 +47,8 @@ import java.nio.FloatBuffer;
 final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
     private static final String TAG = "AcrylicSky";
     private static final long FADE_MS = 900;
+    /** A daytime sky shown while it's dark where the TV is plays at this brightness. */
+    static final float NIGHT_DIM = 0.7f;
 
     interface Listener {
         /** A scene's first frame is on screen. */
@@ -63,6 +65,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
     private String scene;
     /** The place is south of the equator: the moon's lit side is mirrored there. */
     private volatile boolean south;
+    /** It's dark where the TV probably is: daytime skies are dimmed so they don't glare. */
+    private volatile boolean dark;
     private boolean want, hasSurface;
 
     Backdrop(Context c, File mediaDir) {
@@ -80,6 +84,15 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
         south = southern;
         scene = next;
         if (renderer != null) renderer.request(next);
+    }
+
+    void setDark(boolean on) {
+        dark = on;
+    }
+
+    /** How bright a scene plays now: daytime skies are dimmed while it's dark at the TV. */
+    static float dimFor(String scene, boolean darkHere) {
+        return darkHere && scene != null && scene.endsWith("-day") ? NIGHT_DIM : 1f;
     }
 
     void setRunning(boolean on) {
@@ -168,13 +181,19 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
             + "uniform samplerExternalOES uB;\n"
             + "uniform float uMix;\n"
             + "uniform float uSeed;\n"
+            + "uniform float uDimA;\n"
+            + "uniform float uDimB;\n"
             + "varying vec2 vA;\n"
             + "varying vec2 vB;\n"
             // Interleaved gradient noise (Jimenez 2014): cheap, no sin(), stable in precision.
             + "float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }\n"
+            // Night dimming darkens the sky but keeps the sun's disc white, so it doesn't turn gray.
+            + "vec3 dimmed(vec3 c, float k) {\n"
+            + "  return k >= 1.0 ? c : c * mix(k, 1.0, smoothstep(0.82, 1.0, max(c.r, max(c.g, c.b))));\n"
+            + "}\n"
             + "void main() {\n"
-            + "  vec3 c = texture2D(uA, vA).rgb;\n"
-            + "  if (uMix > 0.0) c = mix(c, texture2D(uB, vB).rgb, uMix);\n"
+            + "  vec3 c = dimmed(texture2D(uA, vA).rgb, uDimA);\n"
+            + "  if (uMix > 0.0) c = mix(c, dimmed(texture2D(uB, vB).rgb, uDimB), uMix);\n"
             // Triangular dither of +-1 LSB: hides 8-bit banding in the smooth sky.
             + "  vec2 p = gl_FragCoord.xy + vec2(uSeed, uSeed * 1.618);\n"
             + "  float n = ign(p) + ign(p + vec2(47.0, 13.0)) - 1.0;\n"
@@ -202,6 +221,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
         volatile boolean halt;
         volatile boolean fresh;
         boolean hasFrame;
+        /** Brightness, eased toward {@link #dimFor} on the GL thread. */
+        float dim = 1f;
 
         Channel(String name, int tex, Handler frames) {
             this.name = name;
@@ -373,7 +394,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
         private EGLDisplay dpy = EGL14.EGL_NO_DISPLAY;
         private EGLContext ctx = EGL14.EGL_NO_CONTEXT;
         private EGLSurface win = EGL14.EGL_NO_SURFACE;
-        private int program, aPos, uA, uB, uMix, uSeed, uMatA, uMatB;
+        private int program, aPos, uA, uB, uMix, uSeed, uDimA, uDimB, uMatA, uMatB;
+        private long lastStepMs;
         private Overlay.Gl overlayGl;
         private FloatBuffer quad;
 
@@ -482,6 +504,7 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
             // Test hook: with sky/shooting-star-test in the media folder, a shooting star every 5-10 s.
             boolean testShots = mediaDir != null && new File(mediaDir, "sky/shooting-star-test").exists();
             c.overlay = Overlay.forScene(name, south, testShots);
+            c.dim = dimFor(name, dark);
             c.start();
             if (cur == null) {
                 cur = c;
@@ -520,6 +543,14 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
             }
             if (!draw || cur == null || !cur.hasFrame) return;
 
+            // Dimming follows dusk at the TV over a couple of seconds, not in one jump.
+            long t = SystemClock.uptimeMillis();
+            float k = lastStepMs == 0 ? 1f : Math.min(1f, (t - lastStepMs) / 1500f);
+            lastStepMs = t;
+            boolean night = dark;
+            cur.dim += (dimFor(cur.name, night) - cur.dim) * k;
+            if (next != null) next.dim += (dimFor(next.name, night) - next.dim) * k;
+
             GLES20.glViewport(0, 0, w, h);
             GLES20.glUseProgram(program);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -532,6 +563,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
             GLES20.glUniform1i(uB, 1);
             GLES20.glUniformMatrix4fv(uMatB, 1, false, b.matrix, 0);
             GLES20.glUniform1f(uMix, b == cur ? 0f : mix);
+            GLES20.glUniform1f(uDimA, cur.dim);
+            GLES20.glUniform1f(uDimB, b.dim);
             GLES20.glUniform1f(uSeed, (frame++ % 64) * 7f);
             quad.position(0);
             GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad);
@@ -545,8 +578,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
                 GLES20.glEnable(GLES20.GL_BLEND);
                 GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
                 long now = SystemClock.uptimeMillis();
-                if (cur.overlay != null) cur.overlay.draw(overlayGl, w, h, 1f - outMix, now);
-                if (b != cur && b.overlay != null) b.overlay.draw(overlayGl, w, h, outMix, now);
+                if (cur.overlay != null) cur.overlay.draw(overlayGl, w, h, 1f - outMix, cur.dim, now);
+                if (b != cur && b.overlay != null) b.overlay.draw(overlayGl, w, h, outMix, b.dim, now);
                 GLES20.glDisable(GLES20.GL_BLEND);
             }
             EGL14.eglSwapBuffers(dpy, win);
@@ -598,6 +631,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
             uB = GLES20.glGetUniformLocation(program, "uB");
             uMix = GLES20.glGetUniformLocation(program, "uMix");
             uSeed = GLES20.glGetUniformLocation(program, "uSeed");
+            uDimA = GLES20.glGetUniformLocation(program, "uDimA");
+            uDimB = GLES20.glGetUniformLocation(program, "uDimB");
             uMatA = GLES20.glGetUniformLocation(program, "uMatA");
             uMatB = GLES20.glGetUniformLocation(program, "uMatB");
             float[] v = {-1, -1, 1, -1, -1, 1, 1, 1};

@@ -52,6 +52,15 @@ public final class HostTests {
         eq("40.1000,-88.2000;-33.9000,151.2000;", p.key(), "key");
         eq(Integer.valueOf(6), Integer.valueOf(Places.parse(new StringReader(Places.DEFAULTS)).list.size()), "defaults parse");
 
+        // What the app writes back after an edit on the TV reads back the same.
+        p.list.add(new Places.Place(Places.clean("Odd | name\n"), Places.clean("# Region"), 1.23456, -4.5));
+        Places back = Places.parse(new StringReader(p.format()));
+        eq(p.key(), back.key(), "format round-trip keys");
+        eq("Odd / name", back.list.get(2).name, "pipe cleaned");
+        eq("Region", back.list.get(2).region, "leading # cleaned");
+        eq("metric", back.settings.get("units"), "settings kept");
+        eq(Integer.valueOf(2), Integer.valueOf(back.indexOf(new Places.Place("x", "y", 1.2346, -4.5))), "indexOf by coordinates");
+
         System.out.println(failures == 0 ? "all host tests passed" : failures + " failed");
         System.exit(failures == 0 ? 0 : 1);
     }

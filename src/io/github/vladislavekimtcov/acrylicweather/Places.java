@@ -3,8 +3,10 @@ package io.github.vladislavekimtcov.acrylicweather;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.Reader;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
@@ -26,10 +28,13 @@ import java.util.Map;
  * clock=24h                                    or 12h; default follows the TV's setting
  * </pre>
  *
- * With no file the app shows {@link #DEFAULTS}. Nothing here ever asks where the TV is.
+ * With no file the app shows {@link #DEFAULTS}. Places added, deleted or moved on the TV are
+ * written back to the same file ({@link #format}). Nothing here ever asks where the TV is.
  */
 final class Places {
     static final String FILE = "places.conf";
+    /** A sidebar, not a database. */
+    static final int MAX = 12;
 
     static final String DEFAULTS = ""
             + "New York | New York | 40.7128 | -74.0060\n"
@@ -100,9 +105,59 @@ final class Places {
             } catch (NumberFormatException e) {
                 // skip the line
             }
-            if (p.list.size() == 12) break; // a sidebar, not a database
+            if (p.list.size() == MAX) break;
         }
         return p;
+    }
+
+    /** Names go between '|' on one line: no pipes, no line breaks, no leading '#'. */
+    static String clean(String s) {
+        String t = s.replace('|', '/').replace('\n', ' ').replace('\r', ' ').trim();
+        while (t.startsWith("#")) t = t.substring(1).trim();
+        return t.isEmpty() ? "?" : t;
+    }
+
+    int indexOf(Place p) {
+        for (int i = 0; i < list.size(); i++) if (list.get(i).key().equals(p.key())) return i;
+        return -1;
+    }
+
+    /** The file as the app writes it back: places in order, then the settings. */
+    String format() {
+        StringBuilder b = new StringBuilder();
+        b.append("# Acrylic Weather places: Name | Region | latitude | longitude. The first one opens first.\n");
+        b.append("# The app rewrites this file when places are added, deleted or moved on the TV.\n");
+        for (Place p : list) {
+            b.append(clean(p.name)).append(" | ").append(clean(p.region)).append(" | ")
+                    .append(String.format(Locale.US, "%.4f | %.4f", p.lat, p.lon)).append('\n');
+        }
+        for (Map.Entry<String, String> e : settings.entrySet()) b.append(e.getKey()).append('=').append(e.getValue()).append('\n');
+        return b.toString();
+    }
+
+    /** Writes {@link #format} to dir/places.conf; false if it couldn't. */
+    boolean save(File dir) {
+        if (dir == null) return false;
+        if (!dir.isDirectory() && !dir.mkdirs()) return false;
+        byte[] bytes = format().getBytes(StandardCharsets.UTF_8);
+        File f = new File(dir, FILE), tmp = new File(dir, FILE + ".tmp");
+        try (OutputStream out = new FileOutputStream(tmp)) {
+            out.write(bytes);
+        } catch (IOException e) {
+            return false;
+        }
+        if (tmp.renameTo(f)) {
+            source = FILE;
+            return true;
+        }
+        tmp.delete();
+        try (OutputStream out = new FileOutputStream(f)) {
+            out.write(bytes);
+            source = FILE;
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     /** Same places in the same order: the cached forecasts still line up. */

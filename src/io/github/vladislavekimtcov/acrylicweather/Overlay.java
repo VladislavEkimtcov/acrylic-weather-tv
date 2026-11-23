@@ -137,8 +137,11 @@ final class Overlay {
         south = on;
     }
 
-    /** Draws over the frame just drawn; blending is set up by the caller. */
-    void draw(Gl gl, int width, int height, float alpha, long nowMs) {
+    /**
+     * Draws over the frame just drawn; blending is set up by the caller. {@code dim} darkens the
+     * clouds along with a dimmed sky (1 = as rendered).
+     */
+    void draw(Gl gl, int width, int height, float alpha, float dim, long nowMs) {
         if (width != w || height != h) {
             w = width;
             h = height;
@@ -187,8 +190,8 @@ final class Overlay {
         }
 
         GLES20.glUniform1f(gl.uMode, 0f);
-        GLES20.glUniform3f(gl.uLit, lit[0], lit[1], lit[2]);
-        GLES20.glUniform3f(gl.uShade, shade[0], shade[1], shade[2]);
+        GLES20.glUniform3f(gl.uLit, lit[0] * dim, lit[1] * dim, lit[2] * dim);
+        GLES20.glUniform3f(gl.uShade, shade[0] * dim, shade[1] * dim, shade[2] * dim);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2);
         for (int i = 0; i < cx.length; i++) {
             cx[i] += cv[i] * dt;

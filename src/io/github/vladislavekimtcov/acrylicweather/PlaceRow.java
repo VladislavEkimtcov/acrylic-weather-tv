@@ -3,6 +3,7 @@ package io.github.vladislavekimtcov.acrylicweather;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.text.TextPaint;
 import android.text.TextUtils;
@@ -15,9 +16,12 @@ final class PlaceRow extends View {
     private final TextPaint sub = Ui.paint(12, Ui.MUTED, Ui.regular);
     private final TextPaint temp = Ui.paint(22, Ui.WHITE, Ui.light);
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path chevron = new Path();
     private String nameText = "", subText = "", tempText = "";
     private int icon = -1;
     private boolean current;
+    /** Being moved (Rearrange): which ways it can still go. */
+    private boolean moving, canUp, canDown;
 
     PlaceRow(Context c, Icons icons) {
         super(c);
@@ -36,6 +40,13 @@ final class PlaceRow extends View {
 
     void setCurrent(boolean on) {
         current = on;
+        invalidate();
+    }
+
+    void setMoving(boolean on, boolean up, boolean down) {
+        moving = on;
+        canUp = up;
+        canDown = down;
         invalidate();
     }
 
@@ -64,6 +75,13 @@ final class PlaceRow extends View {
             fill.setColor(Ui.ACCENT);
             c.drawRect(0, Ui.px(8), Ui.px(4), h - Ui.px(8), fill);
         }
+        if (moving) {
+            // Small chevrons on the top and bottom edges: the ways it can still move.
+            float cx = w / 2, s = Ui.px(5);
+            fill.setColor(0xE6FFFFFF);
+            if (canUp) chevron(c, cx, Ui.px(5), s, -1);
+            if (canDown) chevron(c, cx, h - Ui.px(5), s, 1);
+        }
         float left = Ui.px(18), right = w - Ui.px(14);
         float tempW = temp.measureText(tempText);
         float iconSize = Ui.px(28);
@@ -74,5 +92,16 @@ final class PlaceRow extends View {
                 left, h / 2 + Ui.px(15), sub);
         c.drawText(tempText, right, h / 2 + Ui.px(8), temp);
         if (icon >= 0) icons.draw(c, icon, right - tempW - Ui.px(4) - iconSize / 2, h / 2, iconSize, 0f);
+    }
+
+    /** A small filled triangle with its tip at (cx, tip), pointing up (dir -1) or down (dir 1). */
+    private void chevron(Canvas c, float cx, float tip, float s, int dir) {
+        float base = tip - dir * s * 0.9f;
+        chevron.rewind();
+        chevron.moveTo(cx - s * 1.4f, base);
+        chevron.lineTo(cx, tip);
+        chevron.lineTo(cx + s * 1.4f, base);
+        chevron.close();
+        c.drawPath(chevron, fill);
     }
 }

@@ -16,14 +16,17 @@ key, no ads, no analytics.
 
 - **Built for the D-pad.** Every screen works with up, down, left, right, OK and Back. No touch,
   no pointer, no keyboard.
-- **A fixed list of places**, in a sidebar like Windows 10's. The app never asks where the TV is:
-  you list the cities in a small text file (up to 12), and the first one opens first.
+- **Your places, in a sidebar** like Windows 10's. The app never asks where the TV is: you add
+  cities by name with **+** (searched on Open-Meteo with the TV's on-screen keyboard), or list
+  them in a small text file. Up to 12; the first one opens first. **☰ Menu** on a place deletes
+  it or moves it up and down the list.
 - **Animated skies.** Fourteen seamless loops (clear, partly cloudy, cloudy, fog, rain, snow, each
   by day and by night, plus a thunderstorm and golden hour), rendered with Metal on a Mac and played
   by the TV's hardware video decoder. Over the clear and partly cloudy skies, clouds drift by live
   (a few wisps when it's clear, heavier banks when it's partly cloudy), the moon shows tonight's
   real phase, and every 3 to 5 minutes a shooting star crosses the night sky. Pick a day in the
-  forecast and the sky turns into that day's weather.
+  forecast and the sky turns into that day's weather. When it's dark where the TV is and you look
+  at a city where it's day, the bright daytime sky is dimmed so it doesn't glare.
 - **Light on a weak TV.** About 0.3 MB of app plus 26 MB of skies, no libraries (no AndroidX,
   Kotlin, Play Services), one permission (internet). The window doesn't redraw unless you press a
   button; the whole TV is as busy as with a looping video wallpaper (measured, see below).
@@ -35,7 +38,7 @@ key, no ads, no analytics.
 
 | Part | Shows |
 |---|---|
-| Sidebar | Your places, each with its local time, sky and temperature |
+| Sidebar | + (add a place), refresh, and your places, each with its local time, sky and temperature |
 | Now | Temperature, conditions, feels like, today's high and low, wind, humidity, visibility, pressure, dew point, US air quality index |
 | Daily | 10 days: icon, high, low, chance of rain or snow |
 | Hourly | 24 hours as a temperature curve with icons and precipitation bars; the cursor reads each hour out |
@@ -50,8 +53,9 @@ key, no ads, no analytics.
 | ◀ ▶ on the days | pick a day: hourly graph, day details and sky follow |
 | ▼ from the days | the hourly graph; ◀ ▶ moves hour by hour |
 | ▲ from the days | the `°F \| °C` switch; OK toggles |
-| ☰ Menu | refresh now |
-| Back | to the sidebar, then out |
+| ▲ from the first place | **+** (OK: search for a city, pick it to add it) and, to its right, refresh |
+| ☰ Menu | the selected place's menu: **Delete** (asks first) or **Rearrange** (▲ ▼ move it, OK or Back puts it down) |
+| Back | to the sidebar and back to today, then out |
 
 ## Install
 
@@ -67,7 +71,10 @@ with a banner for Android TV and Fire TV home screens.
 
 ### Your places
 
-Copy [`places.example.conf`](places.example.conf) to `places.conf` and list your cities:
+On the TV: **+** at the top of the sidebar searches Open-Meteo's place names as you type; pick a
+match to add it. ☰ Menu on a place deletes or moves it. The app keeps the list in `places.conf` in
+its media folder, so it can also be written from a computer. Copy
+[`places.example.conf`](places.example.conf) to `places.conf` and list your cities:
 
 ```
 # Name | Region | latitude | longitude
@@ -81,6 +88,9 @@ Push it to `/sdcard/Android/media/io.github.vladislavekimtcov.acrylicweather/pla
 Android TV, no root: adb can write an app's media folder) and reopen the app. Coordinates:
 `https://geocoding-api.open-meteo.com/v1/search?name=<city>`. Without a file it shows New York,
 London, Tokyo, Sydney, Reykjavik and Dubai, and leaves a commented `places.conf.example` there.
+Adding, deleting or moving a place on the TV rewrites `places.conf` (comments in it are replaced
+by the app's own header; places and settings are kept), so `adb pull` it before pushing an older
+copy over it.
 
 ## How it stays fast on TV hardware
 
@@ -105,6 +115,10 @@ MT5896, Fire OS 8 / Android 11) while building this:
   cloud sprites built once at start, a few quads per frame, clouds off screen only moved, not drawn.
   About 1.5% of one core on that TV. Skies whose clouds are part of the weather (overcast, fog,
   rain, snow, storm) have them baked into the video.
+- **Night dimming costs nothing either:** it's one multiply in the shader that already draws the
+  frame (near-white pixels are spared, so the sun's disc stays white). "Dark where the TV is" is
+  a guess made without location: the first listed place in the TV's time zone, between its sunset
+  and sunrise from the forecast; with no such place, the TV's clock between 19:00 and 07:00.
 - **Hardware decode, one GL blit.** Each sky is decoded by the TV's video chip into a
   `SurfaceTexture`, and a single textured quad draws it on its own `SurfaceView` (which also
   crossfades two skies when the weather changes). On this TV, decoding straight onto a
@@ -145,12 +159,14 @@ seconds instead of minutes, to see one.
 ## Privacy
 
 The only network traffic is the forecast request to `api.open-meteo.com` and
-`air-quality-api.open-meteo.com` with the coordinates of the places you listed. No location
-permission, no identifiers, no analytics, no crash reporting.
+`air-quality-api.open-meteo.com` with the coordinates of the places you listed, and, while you
+search with +, what you typed to `geocoding-api.open-meteo.com`. No location permission, no
+identifiers, no analytics, no crash reporting.
 
 ## Credits
 
-- Weather data: [Open-Meteo.com](https://open-meteo.com), CC BY 4.0.
+- Weather data: [Open-Meteo.com](https://open-meteo.com), CC BY 4.0. Place search: Open-Meteo's
+  geocoding API, built on [GeoNames](https://www.geonames.org) (CC BY 4.0).
 - Type: [Selawik](https://github.com/microsoft/Selawik), Microsoft's open-source Segoe UI fallback,
   SIL Open Font License 1.1 ([`assets/fonts/OFL.txt`](assets/fonts/OFL.txt)).
 - Look and feel inspired by Windows 10's Weather app. Not affiliated with Microsoft or MSN.
