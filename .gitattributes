@@ -1,0 +1,7 @@
+*.mp4 binary
+*.ttf binary
+*.png binary
+*.java text eol=lf
+*.sh text eol=lf
+*.metal text eol=lf
+*.swift text eol=lf

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A Windows 10 style tile: accent blue square, sun behind a cloud. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#FF0078D7" android:pathData="M0,0h48v48h-48z" />
+    <path android:fillColor="#FFFFC83D"
+        android:pathData="M19,17m-7.5,0a7.5,7.5 0,1 1,15 0a7.5,7.5 0,1 1,-15 0" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M15,36h20a6,6 0,0 0,0.8 -11.95a8.5,8.5 0,0 0,-16.4 -1.5a6.8,6.8 0,0 0,-4.4 13.45z" />
+</vector>
