@@ -5,6 +5,8 @@ import android.graphics.Typeface;
 import android.text.TextPaint;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
+import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.TextView;
 
 /** Sizes, type and colours shared by every view. The look is Windows 10's: square, light, translucent. */
@@ -84,6 +86,14 @@ final class Ui {
         int ba = b >>> 24, br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
         return (Math.round(aa + (ba - aa) * t) << 24) | (Math.round(ar + (br - ar) * t) << 16)
                 | (Math.round(ag + (bg - ag) * t) << 8) | Math.round(ab + (bb - ab) * t);
+    }
+
+    /** Shows the system keyboard for a text box, or hides it. */
+    static void keyboard(View field, boolean show) {
+        InputMethodManager imm = (InputMethodManager) field.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (imm == null) return;
+        if (show) imm.showSoftInput(field, 0);
+        else imm.hideSoftInputFromWindow(field.getWindowToken(), 0);
     }
 
     static int alpha(int color, float a) {

@@ -80,7 +80,8 @@ public final class Main extends Activity {
     private Finder finder;
     /** The place being moved by Rearrange, or -1. */
     private int moving = -1, moveStart;
-    private boolean confirming;
+    /** In a step under the menu (rename, delete's question): Back returns to this menu item; else -1. */
+    private int menuReturn = -1;
     private LinearLayout rowsBox;
     private final List<PlaceRow> rows = new ArrayList<>();
     private TextView updated, source;
@@ -491,8 +492,10 @@ public final class Main extends Activity {
             final int k = i;
             r.setOnFocusChangeListener((v, has) -> {
                 if (!has || moving >= 0) return;
-                // Back in the list, every place shows today: the days are browsed one city at a time.
+                // Back in the list, every place shows today from the top: the days are browsed one
+                // city at a time.
                 if (dayIndex != 0) selectDay(0, true);
+                if (scroller.getScrollY() != 0) scroller.smoothScrollTo(0, 0);
                 if (k != current) {
                     ui.removeCallbacks(pendingPlace);
                     ui.postDelayed(pendingPlace, 220);
@@ -821,20 +824,41 @@ public final class Main extends Activity {
     private void showMenu(int focus) {
         PlaceRow row = rows.get(current);
         row.requestFocus(); // hold focus here while the flyout's items are swapped
-        confirming = false;
+        menuReturn = -1;
+        // The last place can't be deleted: the list is never empty.
         boolean one = places.list.size() < 2;
-        String[] labels = one ? new String[] {"Rearrange"} : new String[] {"Delete", "Rearrange"};
-        Runnable[] actions = one ? new Runnable[] {this::startMove} : new Runnable[] {this::confirmDelete, this::startMove};
+        String[] labels = one ? new String[] {"Rename", "Rearrange"} : new String[] {"Rename", "Rearrange", "Delete"};
+        Runnable[] actions = one ? new Runnable[] {this::rename, this::startMove}
+                : new Runnable[] {this::rename, this::startMove, this::confirmDelete};
         menu.open(Ui.dp(232), rowTop(row), null, labels, actions, focus);
+    }
+
+    private void rename() {
+        PlaceRow row = rows.get(current);
+        row.requestFocus();
+        menuReturn = 0;
+        menu.openEditor(Ui.dp(232), rowTop(row), "Rename", places.list.get(current).name, this::applyRename, () -> showMenu(0));
+    }
+
+    private void applyRename(String typed) {
+        String name = typed.trim();
+        Places.Place old = places.list.get(current);
+        if (!name.isEmpty() && !name.equals(old.name)) {
+            places.list.set(current, new Places.Place(Places.clean(name), old.region, old.lat, old.lon));
+            persist(); // same coordinates: the forecast and its cache still fit
+            refreshRows();
+            city.setText(places.list.get(current).name);
+        }
+        closeMenu();
     }
 
     private void confirmDelete() {
         PlaceRow row = rows.get(current);
         row.requestFocus();
-        confirming = true;
+        menuReturn = 2;
         // Focus starts on Cancel: OK twice in a row doesn't delete.
         menu.open(Ui.dp(232), rowTop(row), "Delete " + places.list.get(current).name + "?",
-                new String[] {"Delete", "Cancel"}, new Runnable[] {this::deleteCurrent, () -> showMenu(0)}, 1);
+                new String[] {"Delete", "Cancel"}, new Runnable[] {this::deleteCurrent, () -> showMenu(2)}, 1);
     }
 
     private float rowTop(View row) {
@@ -845,7 +869,7 @@ public final class Main extends Activity {
     }
 
     private void closeMenu() {
-        confirming = false;
+        menuReturn = -1;
         if (!rows.isEmpty()) rows.get(current).requestFocus();
         menu.close();
     }
@@ -859,7 +883,7 @@ public final class Main extends Activity {
             data = d;
         }
         current = Math.min(i, places.list.size() - 1);
-        confirming = false;
+        menuReturn = -1;
         buildRows();
         show(current, true);
         rows.get(current).requestFocus();
@@ -872,7 +896,7 @@ public final class Main extends Activity {
     private void startMove() {
         rows.get(current).requestFocus();
         menu.close();
-        confirming = false;
+        menuReturn = -1;
         moving = moveStart = current;
         for (int i = 0; i < rows.size(); i++) {
             rows.get(i).animate().alpha(i == moving ? 1f : 0.42f).setDuration(160).setInterpolator(EASE).start();
@@ -990,14 +1014,15 @@ public final class Main extends Activity {
         if (e.getAction() == KeyEvent.ACTION_DOWN) {
             if (menu.isOpen()) {
                 View f = getCurrentFocus();
-                if (f == null || f.getParent() != menu) {
+                boolean typing = f instanceof android.widget.EditText; // left/right move its cursor
+                if (!menu.owns(f)) {
                     closeMenu();
                 } else if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_MENU
-                        || code == KeyEvent.KEYCODE_DPAD_LEFT) {
-                    if (confirming && code == KeyEvent.KEYCODE_BACK) showMenu(0);
+                        || code == KeyEvent.KEYCODE_DPAD_LEFT && !typing) {
+                    if (menuReturn >= 0 && code == KeyEvent.KEYCODE_BACK) showMenu(menuReturn);
                     else closeMenu();
                     return true;
-                } else if (code == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                } else if (code == KeyEvent.KEYCODE_DPAD_RIGHT && !typing) {
                     return true;
                 }
             }

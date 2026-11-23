@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
+import android.text.InputFilter;
 import android.view.Gravity;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
@@ -19,6 +20,12 @@ import android.widget.TextView;
 final class Flyout extends LinearLayout {
     private static final DecelerateInterpolator EASE = new DecelerateInterpolator(2f);
     private Item[] items = new Item[0];
+    /** The text box while renaming, else null. */
+    private Finder.SearchBox field;
+
+    interface Edit {
+        void done(String text);
+    }
 
     Flyout(Context c) {
         super(c);
@@ -41,12 +48,54 @@ final class Flyout extends LinearLayout {
      * and focuses item {@code focus}. A title, if any, sits above the items and can't be focused.
      */
     void open(float x, float y, String title, String[] labels, Runnable[] actions, int focus) {
+        build(title, null, labels, actions);
+        place(x, y);
+        items[Math.max(0, Math.min(items.length - 1, focus))].requestFocus();
+    }
+
+    /**
+     * A text box filled with {@code text} and the keyboard up, Save and Cancel below. The
+     * keyboard's own action key (or closing it) moves to Save.
+     */
+    void openEditor(float x, float y, String title, String text, Edit save, Runnable cancel) {
+        Finder.SearchBox box = new Finder.SearchBox(getContext(), "Name", false);
+        box.setFilters(new InputFilter[] {new InputFilter.LengthFilter(40)});
+        box.setText(text);
+        box.setSelection(box.length());
+        box.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+                | android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                | android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN);
+        build(title, box, new String[] {"Save", "Cancel"},
+                new Runnable[] {() -> save.done(box.getText().toString()), cancel});
+        box.setOnEditorActionListener((v, action, event) -> {
+            if (event != null && event.getAction() != android.view.KeyEvent.ACTION_DOWN) return true;
+            Ui.keyboard(box, false);
+            items[0].requestFocus();
+            return true;
+        });
+        place(x, y);
+        box.requestFocus();
+        postDelayed(() -> {
+            if (field == box && box.isFocused()) Ui.keyboard(box, true);
+        }, 120);
+    }
+
+    private void build(String title, Finder.SearchBox box, String[] labels, Runnable[] actions) {
+        if (field != null) Ui.keyboard(field, false);
         removeAllViews();
+        field = box;
         if (title != null) {
             TextView t = Ui.text(getContext(), 14, Ui.MUTED, Ui.semibold);
             t.setText(title);
             t.setPadding(Ui.dp(18), Ui.dp(8), Ui.dp(18), Ui.dp(6));
             addView(t);
+        }
+        if (box != null) {
+            LayoutParams lp = new LayoutParams(Ui.dp(300), Ui.dp(46));
+            lp.leftMargin = lp.rightMargin = Ui.dp(14);
+            lp.topMargin = Ui.dp(2);
+            lp.bottomMargin = Ui.dp(8);
+            addView(box, lp);
         }
         items = new Item[labels.length];
         for (int i = 0; i < labels.length; i++) {
@@ -58,11 +107,15 @@ final class Flyout extends LinearLayout {
         }
         for (int i = 0; i < items.length; i++) {
             Item it = items[i];
-            it.setNextFocusUpId(items[Math.max(0, i - 1)].getId());
+            it.setNextFocusUpId(i == 0 && box != null ? box.getId() : items[Math.max(0, i - 1)].getId());
             it.setNextFocusDownId(items[Math.min(items.length - 1, i + 1)].getId());
             it.setNextFocusLeftId(it.getId());
             it.setNextFocusRightId(it.getId());
         }
+        if (box != null) box.setNextFocusDownId(items[0].getId());
+    }
+
+    private void place(float x, float y) {
         View parent = (View) getParent();
         measure(MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
         float maxY = parent.getHeight() - getMeasuredHeight() - Ui.dp(12);
@@ -77,10 +130,16 @@ final class Flyout extends LinearLayout {
             setTranslationX(-Ui.px(16));
             animate().alpha(1f).translationX(0).setDuration(170).setInterpolator(EASE).start();
         }
-        items[Math.max(0, Math.min(items.length - 1, focus))].requestFocus();
+    }
+
+    /** True if the view is one of the flyout's own (an item or the text box). */
+    boolean owns(View v) {
+        return v != null && v.getParent() == this;
     }
 
     void close() {
+        if (field != null) Ui.keyboard(field, false);
+        field = null;
         animate().cancel();
         setVisibility(GONE);
         removeAllViews();

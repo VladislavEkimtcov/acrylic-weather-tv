@@ -17,7 +17,6 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -68,7 +67,7 @@ final class Finder extends LinearLayout {
         setPadding(Ui.dp(16), Ui.dp(16), Ui.dp(16), Ui.dp(12));
         setVisibility(GONE);
 
-        field = new SearchBox(c);
+        field = new SearchBox(c, "Search for a city", true);
         field.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -166,10 +165,7 @@ final class Finder extends LinearLayout {
     }
 
     private void keyboard(boolean show) {
-        InputMethodManager imm = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (imm == null) return;
-        if (show) imm.showSoftInput(field, 0);
-        else imm.hideSoftInputFromWindow(field.getWindowToken(), 0);
+        Ui.keyboard(field, show);
     }
 
     private void searchNow() {
@@ -238,20 +234,22 @@ final class Finder extends LinearLayout {
     /** Windows 10's dark text box: black when focused with an accent border, a magnifier on the right. */
     static final class SearchBox extends EditText {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final boolean magnifier;
 
-        SearchBox(Context c) {
+        SearchBox(Context c, String hint, boolean magnifier) {
             super(c);
+            this.magnifier = magnifier;
             setId(View.generateViewId());
             setBackground(null);
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
             setTextColor(Ui.WHITE);
             setHintTextColor(0x8CFFFFFF);
-            setHint("Search for a city");
+            setHint(hint);
             setTypeface(Ui.regular);
             setIncludeFontPadding(false);
             setSingleLine(true);
             setGravity(Gravity.CENTER_VERTICAL);
-            setPadding(Ui.dp(12), 0, Ui.dp(44), 0);
+            setPadding(Ui.dp(12), 0, Ui.dp(magnifier ? 44 : 12), 0);
             setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS
                     | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
             setImeOptions(EditorInfo.IME_ACTION_SEARCH | EditorInfo.IME_FLAG_NO_EXTRACT_UI
@@ -280,14 +278,17 @@ final class Finder extends LinearLayout {
             p.setColor(f ? Ui.ACCENT : 0x8CFFFFFF);
             float i = Ui.px(1);
             c.drawRect(sx + i, i, sx + w - i, h - i, p);
-            // Magnifier.
+            if (magnifier) drawMagnifier(c, sx, w, h);
+            super.onDraw(c);
+        }
+
+        private void drawMagnifier(Canvas c, int sx, float w, float h) {
             p.setColor(Ui.WHITE);
             p.setStrokeWidth(Ui.px(1.6f));
             float r = Ui.px(6.5f), cx = sx + w - Ui.px(24), cy = h / 2 - Ui.px(2);
             c.drawCircle(cx, cy, r, p);
             float d = r * 0.7071f;
             c.drawLine(cx - d, cy + d, cx - d - Ui.px(6), cy + d + Ui.px(6), p);
-            super.onDraw(c);
         }
     }
 

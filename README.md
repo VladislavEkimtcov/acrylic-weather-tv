@@ -13,13 +13,21 @@ key, no ads, no analytics.
   <img src="docs/screens/places.png" alt="Switching places in the sidebar: Sydney under a cloudy sky" width="420">
   <img src="docs/screens/details.png" alt="Hourly temperature curve with rain chances, and day details: sun arc, moon phase, wind" width="420">
 </p>
+<p align="center">
+  <img src="docs/screens/search.png" alt="Adding a place: the + button's search box lists every Springfield with its state" width="420">
+  <img src="docs/screens/menu.png" alt="The Menu button's flyout beside a place: Rename, Rearrange, Delete" width="420">
+</p>
+<p align="center">
+  <img src="docs/screens/rename.png" alt="Renaming a place with the on-screen keyboard: a text box with Save and Cancel" width="420">
+  <img src="docs/screens/rearrange.png" alt="Rearranging: the place being moved is lit with arrows, the others dimmed" width="420">
+</p>
 
 - **Built for the D-pad.** Every screen works with up, down, left, right, OK and Back. No touch,
   no pointer, no keyboard.
 - **Your places, in a sidebar** like Windows 10's. The app never asks where the TV is: you add
   cities by name with **+** (searched on Open-Meteo with the TV's on-screen keyboard), or list
-  them in a small text file. Up to 12; the first one opens first. **☰ Menu** on a place deletes
-  it or moves it up and down the list.
+  them in a small text file. Up to 12; the first one opens first. **☰ Menu** on a place renames
+  it, moves it up or down the list, or deletes it.
 - **Animated skies.** Fourteen seamless loops (clear, partly cloudy, cloudy, fog, rain, snow, each
   by day and by night, plus a thunderstorm and golden hour), rendered with Metal on a Mac and played
   by the TV's hardware video decoder. Over the clear and partly cloudy skies, clouds drift by live
@@ -54,8 +62,8 @@ key, no ads, no analytics.
 | ▼ from the days | the hourly graph; ◀ ▶ moves hour by hour |
 | ▲ from the days | the `°F \| °C` switch; OK toggles |
 | ▲ from the first place | **+** (OK: search for a city, pick it to add it) and, to its right, refresh |
-| ☰ Menu | the selected place's menu: **Delete** (asks first) or **Rearrange** (▲ ▼ move it, OK or Back puts it down) |
-| Back | to the sidebar and back to today, then out |
+| ☰ Menu | the selected place's menu: **Rename** (keyboard, then Save), **Rearrange** (▲ ▼ move it, OK or Back puts it down), **Delete** (asks first) |
+| Back | to the sidebar, today and the top of the page; then out |
 
 ## Install
 
@@ -72,7 +80,7 @@ with a banner for Android TV and Fire TV home screens.
 ### Your places
 
 On the TV: **+** at the top of the sidebar searches Open-Meteo's place names as you type; pick a
-match to add it. ☰ Menu on a place deletes or moves it. The app keeps the list in `places.conf` in
+match to add it. ☰ Menu on a place renames, moves or deletes it. The app keeps the list in `places.conf` in
 its media folder, so it can also be written from a computer. Copy
 [`places.example.conf`](places.example.conf) to `places.conf` and list your cities:
 
@@ -88,7 +96,7 @@ Push it to `/sdcard/Android/media/io.github.vladislavekimtcov.acrylicweather/pla
 Android TV, no root: adb can write an app's media folder) and reopen the app. Coordinates:
 `https://geocoding-api.open-meteo.com/v1/search?name=<city>`. Without a file it shows New York,
 London, Tokyo, Sydney, Reykjavik and Dubai, and leaves a commented `places.conf.example` there.
-Adding, deleting or moving a place on the TV rewrites `places.conf` (comments in it are replaced
+Adding, renaming, moving or deleting a place on the TV rewrites `places.conf` (comments in it are replaced
 by the app's own header; places and settings are kept), so `adb pull` it before pushing an older
 copy over it.
 
