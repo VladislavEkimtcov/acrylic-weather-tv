@@ -18,10 +18,12 @@ key, no ads, no analytics.
   no pointer, no keyboard.
 - **A fixed list of places**, in a sidebar like Windows 10's. The app never asks where the TV is:
   you list the cities in a small text file (up to 12), and the first one opens first.
-- **Animated skies, pre-rendered.** Fourteen seamless loops (clear, partly cloudy, cloudy, fog,
-  rain, snow, each by day and by night, plus a thunderstorm and golden hour), rendered with Metal on
-  a Mac and played by the TV's hardware video decoder. Pick a day in the forecast and the sky turns
-  into that day's weather.
+- **Animated skies.** Fourteen seamless loops (clear, partly cloudy, cloudy, fog, rain, snow, each
+  by day and by night, plus a thunderstorm and golden hour), rendered with Metal on a Mac and played
+  by the TV's hardware video decoder. Over the clear and partly cloudy skies, clouds drift by live
+  (a few wisps when it's clear, heavier banks when it's partly cloudy), the moon shows tonight's
+  real phase, and every 3 to 5 minutes a shooting star crosses the night sky. Pick a day in the
+  forecast and the sky turns into that day's weather.
 - **Light on a weak TV.** About 0.3 MB of app plus 26 MB of skies, no libraries (no AndroidX,
   Kotlin, Play Services), one permission (internet). The window doesn't redraw unless you press a
   button; the whole TV is as busy as with a looping video wallpaper (measured, see below).
@@ -98,6 +100,11 @@ MT5896, Fire OS 8 / Android 11) while building this:
 - **Hiding compression artifacts:** 10-bit encoding (no banding in smooth gradients), x265
   `aq-mode=3` (more bits for dark flat skies, so night doesn't block up), softer deblocking, and a
   1-LSB triangular dither added on the TV when the frame is drawn.
+- **A live layer in the same pass.** Moon, shooting stars and the clear/partly-cloudy clouds are
+  drawn over the video frame by the same GL thread, in order video, moon, shooting star, clouds:
+  cloud sprites built once at start, a few quads per frame, clouds off screen only moved, not drawn.
+  About 1.5% of one core on that TV. Skies whose clouds are part of the weather (overcast, fog,
+  rain, snow, storm) have them baked into the video.
 - **Hardware decode, one GL blit.** Each sky is decoded by the TV's video chip into a
   `SurfaceTexture`, and a single textured quad draws it on its own `SurfaceView` (which also
   crossfades two skies when the weather changes). On this TV, decoding straight onto a
@@ -132,6 +139,8 @@ updates must be signed with the same key. A sky can be swapped without rebuildin
 `/sdcard/Android/media/io.github.vladislavekimtcov.acrylicweather/sky/<scene>.mp4`
 (scenes: `clear-day`, `clear-night`, `partly-day`, `partly-night`, `cloudy-day`, `cloudy-night`,
 `fog-day`, `fog-night`, `rain-day`, `rain-night`, `snow-day`, `snow-night`, `storm`, `dusk`).
+An empty file `sky/shooting-star-test` in the same folder makes shooting stars come every 5 to 10
+seconds instead of minutes, to see one.
 
 ## Privacy
 

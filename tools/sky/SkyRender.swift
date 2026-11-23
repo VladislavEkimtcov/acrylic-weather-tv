@@ -32,13 +32,15 @@ struct Scene {
     var drift: Float = 16, rain: Float = 0, snow: Float = 0, fog: Float = 0
     var fogColor = "C0C8D0", storm: Float = 0
     var vignette: Float = 0.28, rays: Float = 0, moonPhase: Float = 0.41
+    /// 0: no clouds in the video (the app draws them live, see Overlay.java). low: banks on the ground.
+    var clouds: Float = 1, low: Float = 0
 
     init(_ name: String, _ configure: (inout Scene) -> Void) {
         self.name = name
         configure(&self)
     }
 
-    /// The kernel's P[0...13]; see unpack() in Sky.metal.
+    /// The kernel's P[0...14]; see unpack() in Sky.metal.
     func pack(t: Float) -> [SIMD4<Float>] {
         func v(_ c: SIMD3<Float>, _ w: Float) -> SIMD4<Float> { SIMD4(c.x, c.y, c.z, w) }
         return [
@@ -50,6 +52,7 @@ struct Scene {
             v(rgb(sunColor), stars), v(rgb(lit), cover), v(rgb(shade), dark),
             SIMD4(drift, rain, snow, fog), v(rgb(fogColor), storm),
             SIMD4(vignette, rays, moonPhase, 0),
+            SIMD4(clouds, low, 0, 0),
         ]
     }
 }
@@ -57,20 +60,20 @@ struct Scene {
 // The same names as Scenes.java; top/bottom roughly match its colors() (the app's veil).
 let scenes: [Scene] = [
     Scene("clear-day") { s in
-        s.top = "1557B0"; s.mid = "3C86D8"; s.bottom = "8DBDE8"; s.sunAmt = 1; s.rays = 1
+        s.top = "1557B0"; s.mid = "3C86D8"; s.bottom = "8DBDE8"; s.sunAmt = 1; s.rays = 1; s.clouds = 0
         s.cover = 0.2; s.shade = "B4C6DC"; s.drift = 14; s.wind = 0.1; s.seed = 1
     },
     Scene("clear-night") { s in
         s.top = "030817"; s.mid = "0B1734"; s.midPos = 0.6; s.bottom = "1D3160"; s.night = 1
-        s.moonAmt = 1; s.stars = 1; s.cover = 0.14; s.lit = "8E9CB8"; s.shade = "222C40"; s.drift = 10; s.seed = 2
+        s.clouds = 0; s.stars = 1; s.cover = 0.14; s.lit = "8E9CB8"; s.shade = "222C40"; s.drift = 10; s.seed = 2
     },
     Scene("partly-day") { s in
         s.top = "2160A8"; s.mid = "4C8ACB"; s.bottom = "9CC1E3"; s.sunAmt = 0.9; s.sun = SIMD2(0.72, 0.07)
-        s.rays = 0.7; s.cover = 0.5; s.shade = "A8B8CD"; s.drift = 18; s.seed = 3
+        s.rays = 0.7; s.clouds = 0; s.cover = 0.5; s.shade = "A8B8CD"; s.drift = 18; s.seed = 3
     },
     Scene("partly-night") { s in
-        s.top = "050B1B"; s.mid = "101C38"; s.bottom = "23355C"; s.night = 1; s.moonAmt = 0.85
-        s.moon = SIMD2(0.72, 0.075); s.stars = 0.7; s.cover = 0.46; s.lit = "7F8DA8"; s.shade = "1E2638"
+        s.top = "050B1B"; s.mid = "101C38"; s.bottom = "23355C"; s.night = 1; s.clouds = 0
+        s.stars = 0.85; s.cover = 0.46; s.lit = "7F8DA8"; s.shade = "1E2638"
         s.drift = 14; s.seed = 4
     },
     Scene("cloudy-day") { s in
@@ -82,12 +85,12 @@ let scenes: [Scene] = [
         s.lit = "4C5666"; s.shade = "181E27"; s.drift = 18; s.seed = 6
     },
     Scene("fog-day") { s in
-        s.top = "5D6873"; s.mid = "7A848E"; s.bottom = "9EA7B0"; s.cover = 0.35; s.lit = "DCE1E6"
-        s.shade = "A2ABB5"; s.fog = 1; s.fogColor = "C9CFD5"; s.drift = 9; s.seed = 7
+        s.top = "5D6873"; s.mid = "7A848E"; s.bottom = "9EA7B0"; s.low = 1; s.cover = 0.62; s.dark = 0.55
+        s.lit = "F0F3F6"; s.shade = "6F7985"; s.fog = 0.28; s.fogColor = "C2C9D0"; s.drift = 6; s.seed = 7
     },
     Scene("fog-night") { s in
-        s.top = "12171E"; s.mid = "1E252E"; s.bottom = "384049"; s.night = 1; s.cover = 0.3; s.lit = "4A525E"
-        s.shade = "232931"; s.fog = 0.9; s.fogColor = "4B535D"; s.drift = 7; s.seed = 8
+        s.top = "12171E"; s.mid = "1E252E"; s.bottom = "384049"; s.night = 1; s.low = 1; s.cover = 0.62; s.dark = 0.55
+        s.lit = "5C6672"; s.shade = "15191F"; s.fog = 0.25; s.fogColor = "434B55"; s.drift = 5; s.seed = 8
     },
     Scene("rain-day") { s in
         s.top = "2F3B48"; s.mid = "46525F"; s.bottom = "66737F"; s.cover = 0.97; s.dark = 0.6; s.lit = "B6BFCA"
@@ -113,7 +116,7 @@ let scenes: [Scene] = [
     },
     Scene("dusk") { s in
         s.top = "26346E"; s.mid = "6A4F86"; s.midPos = 0.5; s.bottom = "F09A62"; s.glow = 1; s.glowColor = "FF9C5A"
-        s.sunAmt = 1; s.sun = SIMD2(0.72, 0.8); s.sunColor = "FFC27A"; s.rays = 0.5; s.cover = 0.35
+        s.sunAmt = 1; s.sun = SIMD2(0.72, 0.8); s.sunColor = "FFC27A"; s.rays = 0.5; s.clouds = 0; s.cover = 0.35
         s.lit = "FFC9A0"; s.shade = "6B4A6E"; s.drift = 12; s.vignette = 0.22; s.seed = 14
     },
 ]

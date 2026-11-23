@@ -61,6 +61,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
     private Listener listener;
     private Renderer renderer;
     private String scene;
+    /** The place is south of the equator: the moon's lit side is mirrored there. */
+    private volatile boolean south;
     private boolean want, hasSurface;
 
     Backdrop(Context c, File mediaDir) {
@@ -74,7 +76,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
     }
 
     /** Crossfades to a scene; a no-op when it is already the one playing or coming. */
-    void play(String next) {
+    void play(String next, boolean southern) {
+        south = southern;
         scene = next;
         if (renderer != null) renderer.request(next);
     }
@@ -184,6 +187,8 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
      */
     private final class Channel extends MediaCodec.Callback implements SurfaceTexture.OnFrameAvailableListener {
         final String name;
+        /** Live moon, shooting stars and clouds over this sky, or null. */
+        Overlay overlay;
         final int tex;
         final SurfaceTexture st;
         final Surface surface;
@@ -369,6 +374,7 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
         private EGLContext ctx = EGL14.EGL_NO_CONTEXT;
         private EGLSurface win = EGL14.EGL_NO_SURFACE;
         private int program, aPos, uA, uB, uMix, uSeed, uMatA, uMatB;
+        private Overlay.Gl overlayGl;
         private FloatBuffer quad;
 
         /** Showing, and fading in over it (or null). */
@@ -463,13 +469,19 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
 
         private void switchTo(String name) {
             Channel showingOrComing = next != null ? next : cur;
-            if (showingOrComing != null && showingOrComing.name.equals(name)) return;
+            if (showingOrComing != null && showingOrComing.name.equals(name)) {
+                if (showingOrComing.overlay != null) showingOrComing.overlay.setSouth(south);
+                return;
+            }
             if (next != null) { // a fade not finished: drop the one coming in
                 next.stop();
                 next.release();
                 next = null;
             }
             Channel c = new Channel(name, texture(), frames);
+            // Test hook: with sky/shooting-star-test in the media folder, a shooting star every 5-10 s.
+            boolean testShots = mediaDir != null && new File(mediaDir, "sky/shooting-star-test").exists();
+            c.overlay = Overlay.forScene(name, south, testShots);
             c.start();
             if (cur == null) {
                 cur = c;
@@ -525,6 +537,18 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
             GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 0, quad);
             GLES20.glEnableVertexAttribArray(aPos);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+
+            // Live layer over the video, faded with it: moon, shooting star, clouds.
+            float outMix = b == cur ? 0f : mix;
+            boolean over = overlayGl != null && (cur.overlay != null || (b != cur && b.overlay != null));
+            if (over) {
+                GLES20.glEnable(GLES20.GL_BLEND);
+                GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+                long now = SystemClock.uptimeMillis();
+                if (cur.overlay != null) cur.overlay.draw(overlayGl, w, h, 1f - outMix, now);
+                if (b != cur && b.overlay != null) b.overlay.draw(overlayGl, w, h, outMix, now);
+                GLES20.glDisable(GLES20.GL_BLEND);
+            }
             EGL14.eglSwapBuffers(dpy, win);
 
             if (!curShown) {
@@ -579,6 +603,7 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
             float[] v = {-1, -1, 1, -1, -1, 1, 1, 1};
             quad = ByteBuffer.allocateDirect(v.length * 4).order(ByteOrder.nativeOrder()).asFloatBuffer();
             quad.put(v).position(0);
+            overlayGl = Overlay.Gl.create(); // null: skies play without the live layer
             return true;
         }
 
@@ -623,6 +648,10 @@ final class Backdrop extends SurfaceView implements SurfaceHolder.Callback {
         }
 
         private void teardown() {
+            if (overlayGl != null) {
+                overlayGl.release();
+                overlayGl = null;
+            }
             if (dpy != EGL14.EGL_NO_DISPLAY) {
                 EGL14.eglMakeCurrent(dpy, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT);
                 if (win != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(dpy, win);

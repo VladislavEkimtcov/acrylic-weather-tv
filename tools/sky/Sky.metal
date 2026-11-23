@@ -46,6 +46,7 @@ struct Sky {
     float drift, rain, snow, fog;
     float3 fogColor; float storm;
     float vignette, rays, moonPhase;
+    float clouds, low; // clouds 0: none baked in (the app draws them live); low 1: heavy banks near the ground
 };
 
 static Sky unpack(constant float4 *P) {
@@ -61,6 +62,7 @@ static Sky unpack(constant float4 *P) {
     s.drift = P[11].x; s.rain = P[11].y; s.snow = P[11].z; s.fog = P[11].w;
     s.fogColor = P[12].xyz; s.storm = P[12].w;
     s.vignette = P[13].x; s.rays = P[13].y; s.moonPhase = P[13].z;
+    s.clouds = P[14].x; s.low = P[14].y;
     return s;
 }
 
@@ -185,13 +187,17 @@ static float3 soft(float2 px, float tt, thread const Sky &s, float flash) {
         }
     }
 
-    // Three cloud layers, far to near, each drifting a little faster (parallax).
-    float4 far = cloudLayer(uv, tt, s, 2.4, 0.45, 0.02, 0.46, 0.6, 11.0, flash, 0.0);
-    col = mix(col, far.rgb, far.a);
-    float4 mid = cloudLayer(uv, tt, s, 1.7, 1.0, -0.02, 0.62, 0.85, 37.0, flash, 0.85);
-    col = mix(col, mid.rgb, mid.a);
-    float4 near = cloudLayer(uv, tt, s, 1.15, 1.8, -0.12, 0.52, 0.95, 71.0, flash, 1.0);
-    col = mix(col, near.rgb, near.a);
+    // Three cloud layers, far to near, each drifting a little faster (parallax). With `low`,
+    // they become heavy banks sitting on the ground, piled toward the bottom of the screen.
+    if (s.clouds > 0.0) {
+        float lo = s.low;
+        float4 far = cloudLayer(uv, tt, s, mix(2.4, 1.6, lo), 0.45, mix(0.02, 0.42, lo), mix(0.46, 0.9, lo), 0.6, 11.0, flash, lo);
+        col = mix(col, far.rgb, far.a);
+        float4 mid = cloudLayer(uv, tt, s, mix(1.7, 1.1, lo), 1.0, mix(-0.02, 0.52, lo), mix(0.62, 1.05, lo), mix(0.85, 0.95, lo), 37.0, flash, 0.85 + 0.15 * lo);
+        col = mix(col, mid.rgb, mid.a);
+        float4 near = cloudLayer(uv, tt, s, mix(1.15, 0.8, lo), 1.8, mix(-0.12, 0.62, lo), mix(0.52, 1.2, lo), 0.95, 71.0, flash, 1.0);
+        col = mix(col, near.rgb, near.a);
+    }
 
     // Fog banks: long, slow, thicker toward the ground.
     if (s.fog > 0.0) {

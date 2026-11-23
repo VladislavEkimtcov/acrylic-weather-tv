@@ -686,7 +686,7 @@ public final class Main extends Activity {
             // otherwise the backdrop crossfades from one sky to the next by itself.
             if (veil.getVisibility() == View.VISIBLE) setVeil(Scenes.colors(next));
             scene = next;
-            backdrop.play(next);
+            backdrop.play(next, places.list.get(current).lat < 0);
         }
     };
 
